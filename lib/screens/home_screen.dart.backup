@@ -1,0 +1,84 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../providers/pill_provider.dart';
+import '../widgets/today_pills_widget.dart';
+import '../widgets/calendar_widget.dart';
+import 'add_pill_screen.dart';
+import '../services/notification_service.dart';
+
+class HomeScreen extends StatefulWidget {
+  const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  int _currentIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<PillProvider>().loadPills();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('알약 알람', style: TextStyle(color: Colors.white)),
+        backgroundColor: Colors.blue[600],
+        foregroundColor: Colors.white,
+        actions: [
+          ),
+          // 지연 테스트 알림 버튼
+          IconButton(
+            icon: const Icon(Icons.schedule),
+            onPressed: () async {
+              final notificationService = NotificationService();
+              await notificationService.sendDelayedTestNotification();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('5초 후 테스트 알림을 스케줄링했습니다!')),
+              );
+            },
+            tooltip: '지연 테스트 알림',
+          ),
+          // 알약 추가 버튼
+          IconButton(
+            icon: const Icon(Icons.add),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const AddPillScreen()),
+              );
+            },
+            tooltip: '알약 추가',
+          ),
+        ],
+      ),
+      body: IndexedStack(
+        index: _currentIndex,
+        children: const [TodayPillsWidget(), CalendarWidget()],
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _currentIndex,
+        onTap: (index) {
+          setState(() {
+            _currentIndex = index;
+          });
+        },
+        items: const [
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: '오늘'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.calendar_month),
+            label: '캘린더',
+          ),
+        ],
+        selectedItemColor: Colors.blue[600],
+        unselectedItemColor: Colors.grey,
+      ),
+    );
+  }
+}

@@ -1,0 +1,278 @@
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:timezone/timezone.dart' as tz;
+import 'package:timezone/data/latest.dart' as tz;
+import '../models/pill.dart';
+
+class NotificationService {
+  static final NotificationService _instance = NotificationService._internal();
+  factory NotificationService() => _instance;
+  NotificationService._internal();
+
+  final FlutterLocalNotificationsPlugin _notifications =
+      FlutterLocalNotificationsPlugin();
+
+  Future<void> initialize() async {
+    tz.initializeTimeZones();
+
+    // Android 채널 생성
+    const androidChannel = AndroidNotificationChannel(
+      'pill_reminders',
+      '알약 알림',
+      description: '알약 복용 시간 알림',
+      importance: Importance.high,
+    );
+
+    await _notifications
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >()
+        ?.createNotificationChannel(androidChannel);
+
+    const androidSettings = AndroidInitializationSettings(
+      '@mipmap/ic_launcher',
+    );
+    const iosSettings = DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+    );
+
+    const initSettings = InitializationSettings(
+      android: androidSettings,
+      iOS: iosSettings,
+    );
+
+    await _notifications.initialize(initSettings);
+  }
+
+  // 알약 알림 스케줄링
+  Future<void> schedulePillReminder(Pill pill) async {
+    if (!pill.isActive) return;
+
+    final now = DateTime.now();
+    DateTime nextDate = pill.startDate;
+
+    // 시작일이 과거인 경우 다음 복용일 계산
+    if (nextDate.isBefore(now)) {
+      nextDate = _calculateNextDoseDate(pill, now);
+    }
+
+    // 기존 알림 삭제 (중복 방지)
+    await _cancelExistingNotifications(pill.id!);
+
+    // 다음 30일간의 알림 스케줄링
+    for (int i = 0; i < 30; i++) {
+      final scheduledDate = nextDate.add(Duration(days: i));
+      if (scheduledDate.isAfter(now)) {
+        // 각 알람 시간에 대해 알림 스케줄링
+        for (String alarmTime in pill.alarmTimes) {
+          await _scheduleNotification(pill, scheduledDate, alarmTime);
+        }
+      }
+    }
+  }
+
+  // 테스트 알림 (즉시 발송)
+  Future<void> sendTestNotification() async {
+    try {
+      await _notifications.show(
+        999999, // 테스트용 고유 ID
+        '테스트 알림',
+        '알약 알림이 정상적으로 작동합니다!',
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            'pill_reminders',
+            '알약 알림',
+            channelDescription: '알약 복용을 위한 알림',
+            importance: Importance.high,
+            priority: Priority.high,
+          ),
+          iOS: const DarwinNotificationDetails(
+            presentAlert: true,
+            presentBadge: true,
+            presentSound: true,
+          ),
+        ),
+      );
+      print('✅ 테스트 알림 발송 성공');
+    } catch (e) {
+      print('❌ 테스트 알림 발송 실패: $e');
+    }
+  }
+
+  // 5초 후 테스트 알림
+  Future<void> sendDelayedTestNotification() async {
+    try {
+      await _notifications.zonedSchedule(
+        999998, // 테스트용 고유 ID
+        '지연 테스트 알림',
+        '5초 후 알림이 왔습니다!',
+        tz.TZDateTime.now(tz.local).add(const Duration(seconds: 5)),
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            'pill_reminders',
+            '알약 알림',
+            channelDescription: '알약 복용을 위한 알림',
+            importance: Importance.high,
+            priority: Priority.high,
+          ),
+          iOS: const DarwinNotificationDetails(
+            presentAlert: true,
+            presentBadge: true,
+            presentSound: true,
+          ),
+        ),
+        
+            DateTimeComponents.time,
+      );
+      print('✅ 지연 테스트 알림 스케줄링 성공');
+    } catch (e) {
+      print('❌ 지연 테스트 알림 스케줄링 실패: $e');
+    }
+  }
+
+  DateTime _calculateNextDoseDate(Pill pill, DateTime fromDate) {
+    switch (pill.frequency) {
+      case 'daily':
+        return fromDate;
+      case 'weekly':
+        final daysSinceStart = fromDate.difference(pill.startDate).inDays;
+        final weeksSinceStart = daysSinceStart ~/ 7;
+        return pill.startDate.add(Duration(days: (weeksSinceStart + 1) * 7));
+      case 'monthly':
+        final monthsSinceStart =
+            (fromDate.year - pill.startDate.year) * 12 +
+            (fromDate.month - pill.startDate.month);
+        return DateTime(
+          pill.startDate.year,
+          pill.startDate.month + monthsSinceStart + 1,
+          pill.startDate.day,
+        );
+      case 'custom':
+        if (pill.customDays != null) {
+          final daysSinceStart = fromDate.difference(pill.startDate).inDays;
+          final cyclesSinceStart = daysSinceStart ~/ pill.customDays!;
+          return pill.startDate.add(
+            Duration(days: (cyclesSinceStart + 1) * pill.customDays!),
+          );
+        }
+        return fromDate;
+      default:
+        return fromDate;
+    }
+  }
+
+  // 기존 알림 삭제
+  Future<void> _cancelExistingNotifications(int pillId) async {
+    try {
+      // 해당 알약의 모든 알림 ID 패턴 삭제
+      final notifications = await _notifications.pendingNotificationRequests();
+      for (final notification in notifications) {
+        if (notification.id >= pillId * 1000000 &&
+            notification.id < (pillId + 1) * 1000000) {
+          await _notifications.cancel(notification.id);
+        }
+      }
+    } catch (e) {
+      // 알림 삭제 실패는 무시 (새 알림 스케줄링 계속 진행)
+    }
+  }
+
+  Future<void> _scheduleNotification(
+    Pill pill,
+    DateTime scheduledDate,
+    String alarmTime,
+  ) async {
+    // 알람 시간 파싱 (HH:mm 형식)
+    final timeParts = alarmTime.split(':');
+    if (timeParts.length != 2) return;
+
+    final hour = int.tryParse(timeParts[0]);
+    final minute = int.tryParse(timeParts[1]);
+    if (hour == null || minute == null) return;
+
+    // 알림 시간 설정 (정확한 시간)
+    final notificationTime = DateTime(
+      scheduledDate.year,
+      scheduledDate.month,
+      scheduledDate.day,
+      hour,
+      minute,
+    );
+
+    // 과거 시간이면 스킵
+    if (notificationTime.isBefore(DateTime.now())) return;
+
+    // 고유 ID 생성 (pillId + 날짜 + 시간)
+    final id =
+        (pill.id! * 1000000) +
+        (scheduledDate.day * 10000) +
+        (hour * 100) +
+        minute;
+
+    try {
+      await _notifications.zonedSchedule(
+        id,
+        '알약 복용 시간',
+        '${pill.name}을(를) 복용해주세요!',
+        tz.TZDateTime.from(notificationTime, tz.local),
+        NotificationDetails(
+          android: AndroidNotificationDetails(
+            'pill_reminders',
+            '알약 알림',
+            channelDescription: '알약 복용을 위한 알림',
+            importance: Importance.high,
+            priority: Priority.high,
+            enableVibration: true,
+            enableLights: true,
+            playSound: true,
+            // 백그라운드에서도 정확한 시간에 알림
+            timeoutAfter: 30000, // 30초 후 자동 제거
+          ),
+          iOS: const DarwinNotificationDetails(
+            presentAlert: true,
+            presentBadge: true,
+            presentSound: true,
+            // iOS에서도 백그라운드 알림 지원
+            interruptionLevel: InterruptionLevel.timeSensitive,
+          ),
+        ),
+         // Doze 모드에서도 알림
+            DateTimeComponents.time,
+        // 정확한 시간에 알림 발송
+        matchDateTimeComponents: DateTimeComponents.time,
+      );
+    } catch (e) {
+      // 개별 알림 실패는 로그만 남기고 계속 진행
+    }
+  }
+
+  // 특정 알약의 모든 알림 취소
+  Future<void> cancelPillNotifications(int pillId) async {
+    try {
+      // 해당 알약의 모든 알림 ID 패턴 삭제
+      final notifications = await _notifications.pendingNotificationRequests();
+      for (final notification in notifications) {
+        if (notification.id >= pillId * 1000000 &&
+            notification.id < (pillId + 1) * 1000000) {
+          await _notifications.cancel(notification.id);
+        }
+      }
+    } catch (e) {
+      // 알림 취소 실패는 무시
+    }
+  }
+
+  // 모든 알림 취소
+  Future<void> cancelAllNotifications() async {
+    try {
+      await _notifications.cancelAll();
+    } catch (e) {
+      // 알림 취소 실패는 무시
+    }
+  }
+
+  Future<List<PendingNotificationRequest>> getPendingNotifications() async {
+    return await _notifications.pendingNotificationRequests();
+  }
+}

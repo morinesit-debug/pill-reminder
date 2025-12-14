@@ -1,0 +1,21 @@
+# This file configures the analyzer to use the lint rule set from `package:lints`
+# This is the recommended approach for new projects.
+# See https://dart.dev/go/lints for more information about the lint rule set.
+include: package:lints/recommended.yaml
+
+# For more information about the core and recommended set of lints, see
+# https://dart.dev/go/core-lints
+
+# Uncomment the following section to specify additional rules:
+linter:
+  rules:
+    # add lint rules here
+    avoid_print: true  # print 문 사용 금지
+    prefer_const_constructors: true
+    prefer_const_literals_to_create_immutables: true
+    prefer_const_declarations: true
+    prefer_final_fields: true
+    prefer_final_locals: true
+    prefer_single_quotes: true
+    sort_child_properties_last: true
+    use_key_in_widget_constructors: true
